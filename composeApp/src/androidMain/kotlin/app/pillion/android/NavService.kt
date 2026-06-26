@@ -28,6 +28,7 @@ import app.pillion.nav.LatLng
 import app.pillion.nav.NaviLiteTbt
 import app.pillion.nav.RouteRequest
 import app.pillion.nav.RouteResult
+import app.pillion.nav.RouteStep
 import app.pillion.nav.hereApiKeyOrEmpty
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -37,9 +38,11 @@ import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import java.util.UUID
+import java.util.concurrent.atomic.AtomicReference
 
 /**
  * Live turn-by-turn navigation to the dash, screen-off-safe (foreground service).
@@ -168,62 +171,97 @@ class NavService : Service() {
             for (frame in NaviLiteTbt.routeList(steps)) channel.write(frame)
 
             val renderer = if (imageMode) NavMapRenderer(apiKey = key) else null
+            // Warm the tile cache for the starting viewport so the first frame is instant.
+            renderer?.prefetchViewport(from)
+
             var seq = 0
             var lastActive = -1
 
-            suspend fun emit(here: LatLng): Double {
-                val distAlong = Guidance.snapDistance(geometry, cum, here)
-                val prog = Guidance.progress(maneuverDist, distAlong)
-                val step = steps[prog.activeIndex]
+            // Shared render slot: consumer writes latest pos+guidance; producer picks it up.
+            data class RenderReq(val pos: LatLng, val icon: Int, val distM: Int, val road: String)
+            val renderSlot = AtomicReference<RenderReq?>(null)
+            val frameChannel = Channel<ByteArray>(Channel.CONFLATED)
+
+            // Send TBT + image for the given guidance state. Only the consumer (image loop) calls
+            // this — keeps all channel.write() calls on a single coroutine to avoid interleaving.
+            suspend fun sendFrame(pos: LatLng, prog: Guidance.Progress, step: RouteStep) {
                 if (prog.activeIndex != lastActive) {
                     channel.write(NaviLiteTbt.activeTurn(prog.activeIndex))
                     step.roadName?.let { channel.write(NaviLiteTbt.roadName(it)) }
                     lastActive = prog.activeIndex
                 }
-                channel.write(
-                    NaviLiteTbt.nextTurn(
-                        NaviLiteTbt.iconOf(step.maneuver), prog.remainingMeters.toFloat(),
-                        nextRoad = step.roadName ?: "",
-                    ),
-                )
+                channel.write(NaviLiteTbt.nextTurn(
+                    NaviLiteTbt.iconOf(step.maneuver), prog.remainingMeters.toFloat(),
+                    nextRoad = step.roadName ?: ""))
                 if (renderer != null) {
-                    channel.write(
-                        NaviLiteTbt.imageFrame(
-                            seq++,
-                            renderer.render(
-                                geometry, here,
-                                maneuverIcon = NaviLiteTbt.iconOf(step.maneuver),
-                                distanceMeters = prog.remainingMeters,
-                                roadName = step.roadName ?: "",
-                                trafficSpans = route.trafficSpans,
-                            ),
-                        ),
-                    )
-                    drainToImageAck(reader) // wait for the dash to ack -> paces to the dash's max rate
+                    renderSlot.set(RenderReq(pos, NaviLiteTbt.iconOf(step.maneuver), prog.remainingMeters, step.roadName ?: ""))
+                    val jpeg = frameChannel.receive() // already rendered during previous ACK wait
+                    channel.write(NaviLiteTbt.imageFrame(seq++, jpeg))
+                    drainToImageAck(reader)
                 }
-                Log.i(TAG, "here ${"%.5f".format(here.lat)},${"%.5f".format(here.lng)} -> " +
+                Log.i(TAG, "here ${"%.5f".format(pos.lat)},${"%.5f".format(pos.lng)} -> " +
                     "active ${prog.activeIndex}/${steps.size} ${step.maneuver} in ${prog.remainingMeters}m")
-                return distAlong
             }
 
-            if (liveGps) {
-                Log.i(TAG, "LIVE GPS guidance")
-                while (scope.isActive) {
-                    val loc = fixes.receive()
-                    val distAlong = emit(LatLng(loc.latitude, loc.longitude))
-                    if (distAlong >= total - ARRIVE_THRESHOLD_M) { Log.i(TAG, "arrived"); break }
+            coroutineScope {
+                // Producer: renders continuously so a fresh frame is always waiting in the channel
+                // when the consumer returns from drainToImageAck. CONFLATED keeps only the latest.
+                if (renderer != null) {
+                    launch {
+                        while (isActive) {
+                            val req = renderSlot.get() ?: run { kotlinx.coroutines.yield(); continue }
+                            val jpeg = renderer.render(
+                                geometry, req.pos,
+                                maneuverIcon = req.icon, distanceMeters = req.distM,
+                                roadName = req.road, trafficSpans = route.trafficSpans,
+                            )
+                            frameChannel.trySend(jpeg)
+                            kotlinx.coroutines.yield()
+                        }
+                    }
                 }
-            } else {
-                Log.i(TAG, "SIM guidance (dash-paced)")
-                var along = 0.0
-                var lastT = System.currentTimeMillis()
-                while (along <= total && scope.isActive) {
-                    emit(Guidance.pointAt(geometry, cum, along))
-                    if (renderer == null) delay(250)
-                    val now = System.currentTimeMillis()
-                    along += SIM_SPEED_MPS * ((now - lastT).coerceIn(1L, 1000L)) / 1000.0
-                    lastT = now
+
+                if (liveGps) {
+                    // Decouple image rate from GPS rate: GPS updates guidance state at 1 Hz;
+                    // the image loop streams at BT-ACK rate (~12 fps) using the latest state.
+                    data class GpsState(val pos: LatLng, val distAlong: Double, val prog: Guidance.Progress, val step: RouteStep)
+                    val gpsState = AtomicReference<GpsState?>(null)
+
+                    Log.i(TAG, "LIVE GPS guidance (image rate decoupled from GPS rate)")
+                    launch {
+                        // GPS updater: only touches shared state, never writes to channel.
+                        while (isActive) {
+                            val loc = fixes.receive()
+                            val pos = LatLng(loc.latitude, loc.longitude)
+                            val distAlong = Guidance.snapDistance(geometry, cum, pos)
+                            val prog = Guidance.progress(maneuverDist, distAlong)
+                            gpsState.set(GpsState(pos, distAlong, prog, steps[prog.activeIndex]))
+                        }
+                    }
+
+                    // Image loop: runs at BT rate, checks arrival from shared GPS state.
+                    while (scope.isActive) {
+                        val s = gpsState.get() ?: run { delay(50); continue }
+                        if (s.distAlong >= total - ARRIVE_THRESHOLD_M) { Log.i(TAG, "arrived"); break }
+                        sendFrame(s.pos, s.prog, s.step)
+                        if (renderer == null) delay(250)
+                    }
+                } else {
+                    // SIM mode: position is exactly on the route, so skip snapDistance entirely.
+                    Log.i(TAG, "SIM guidance (pipeline, no snap)")
+                    var along = 0.0
+                    var lastT = System.currentTimeMillis()
+                    while (along <= total && scope.isActive) {
+                        val pos = Guidance.pointAt(geometry, cum, along)
+                        val prog = Guidance.progress(maneuverDist, along) // along IS distAlong
+                        sendFrame(pos, prog, steps[prog.activeIndex])
+                        if (renderer == null) delay(250)
+                        val now = System.currentTimeMillis()
+                        along += SIM_SPEED_MPS * ((now - lastT).coerceIn(1L, 1000L)) / 1000.0
+                        lastT = now
+                    }
                 }
+                renderSlot.set(null)
             }
             Log.i(TAG, "navigation complete")
             delay(1000)

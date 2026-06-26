@@ -88,11 +88,19 @@ class NavMapRenderer(
 
         if (geometry.size >= 2) {
             val levels = trafficLevels(trafficSpans, geometry.size)
+            val clip = 200f // pixels outside viewport to still consider
             var x0 = (lonToWorld(geometry[0].lng) * worldPx - originX).toFloat()
             var y0 = (latToWorld(geometry[0].lat) * worldPx - originY).toFloat()
             for (i in 1 until geometry.size) {
                 val x1 = (lonToWorld(geometry[i].lng) * worldPx - originX).toFloat()
                 val y1 = (latToWorld(geometry[i].lat) * worldPx - originY).toFloat()
+                // Skip segments where both endpoints are clearly outside the same viewport edge.
+                // This avoids ~thousands of drawLine calls for off-screen route geometry.
+                if ((x0 < -clip && x1 < -clip) || (x0 > width + clip && x1 > width + clip) ||
+                    (y0 < -clip && y1 < -clip) || (y0 > height + clip && y1 > height + clip)) {
+                    x0 = x1; y0 = y1
+                    continue
+                }
                 routePaint.color = trafficColor(levels[i - 1])
                 canvas.drawLine(x0, y0, x1, y1, routePaint)
                 x0 = x1; y0 = y1
@@ -156,6 +164,19 @@ class NavMapRenderer(
         14 -> "↻"        // roundabout ↻
         0, 1, 2 -> "◉"   // arrive ◉
         else -> "↑"      // continue / straight ↑
+    }
+
+    /** Blocking: fetch all tiles visible from [center] into the cache so the first render is instant. */
+    fun prefetchViewport(center: LatLng) {
+        val worldPx = (1 shl zoom) * TILE.toDouble()
+        val originX = lonToWorld(center.lng) * worldPx - width / 2.0
+        val originY = latToWorld(center.lat) * worldPx - height / 2.0
+        val n = 1 shl zoom
+        for (tx in floor(originX / TILE).toInt()..floor((originX + width) / TILE).toInt()) {
+            for (ty in floor(originY / TILE).toInt()..floor((originY + height) / TILE).toInt()) {
+                if (tx in 0 until n && ty in 0 until n) tile(tx, ty)
+            }
+        }
     }
 
     private fun tile(x: Int, y: Int): Bitmap? {

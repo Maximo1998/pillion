@@ -43,7 +43,11 @@ class NavDevActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         runCatching {
             requestPermissions(
-                arrayOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.POST_NOTIFICATIONS),
+                arrayOf(
+                    Manifest.permission.ACCESS_FINE_LOCATION,
+                    Manifest.permission.POST_NOTIFICATIONS,
+                    Manifest.permission.BLUETOOTH_CONNECT,
+                ),
                 1,
             )
         }
