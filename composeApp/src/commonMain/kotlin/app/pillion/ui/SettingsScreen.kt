@@ -53,6 +53,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import app.pillion.core.AppInfo
 import app.pillion.core.DashResolution
+import app.pillion.core.SettingsStore
 import app.pillion.core.ThemeMode
 import app.pillion.core.UpdateInfo
 import app.pillion.resources.Res
@@ -73,6 +74,8 @@ internal fun SettingsScreen(
     dashEnabled: Boolean = false,
     dashResolution: DashResolution = DashResolution.DEFAULT,
     onDashResolution: (DashResolution) -> Unit = {},
+    dashAnchorDp: Int = SettingsStore.DEFAULT_DASH_ANCHOR_DP,
+    onDashAnchorDp: (Int) -> Unit = {},
     onSetUpDash: () -> Unit = {},
     onDisableDash: () -> Unit = {},
     update: UpdateInfo?,
@@ -203,6 +206,27 @@ internal fun SettingsScreen(
                 }
                 GroupDivider()
                 DashResolutionSelector(dashResolution, onDashResolution)
+                GroupDivider()
+                // Inverted track: dragging RIGHT lowers the anchor dp => larger UI. We persist the
+                // anchor (resolution-independent) but the user sees an intuitive size factor that
+                // grows to the right. Most-compact (MAX anchor) reads 1.0x.
+                val minA = SettingsStore.MIN_DASH_ANCHOR_DP
+                val maxA = SettingsStore.MAX_DASH_ANCHOR_DP
+                val tenths = (maxA * 10 / dashAnchorDp).coerceAtLeast(10)
+                SettingSlider(
+                    "Dash UI size",
+                    "${tenths / 10}.${tenths % 10}x",
+                    (maxA + minA - dashAnchorDp).toFloat(),
+                    minA.toFloat(),
+                    maxA.toFloat(),
+                ) { pos -> onDashAnchorDp(maxA + minA - pos.roundToInt()) }
+                Text(
+                    "Drag right for larger text and icons on the panel (fewer elements at once). " +
+                        "Independent of resolution above.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(start = 6.dp, end = 6.dp, bottom = 4.dp),
+                )
             }
             Text(
                 "Casts the real app to the dash in landscape with the screen off. Run setup once " +

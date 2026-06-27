@@ -19,6 +19,7 @@ import android.os.IBinder
 import android.os.PowerManager
 import android.util.Log
 import app.pillion.core.DashResolution
+import app.pillion.core.SettingsStore
 import app.pillion.core.MirrorEngine
 import app.pillion.core.ScreenSource
 import app.pillion.core.MirrorState
@@ -44,6 +45,7 @@ class CaptureService : Service() {
     private var engine: MirrorEngine? = null
     private var wakeLock: PowerManager.WakeLock? = null
     private var dashEnabled = false
+    private var dashAnchorDp = SettingsStore.DEFAULT_DASH_ANCHOR_DP
     private var dashSwitch: SwitchableScreenSource? = null
     private var screenReceiver: BroadcastReceiver? = null
     private var keyguardManager: KeyguardManager? = null
@@ -62,6 +64,8 @@ class CaptureService : Service() {
         val quality = intent?.getIntExtra(EXTRA_QUALITY, 40) ?: 40
         val maxFps = intent?.getIntExtra(EXTRA_MAX_FPS, 15) ?: 15
         val dashResolution = dashResolutionFrom(intent)
+        dashAnchorDp = intent?.getIntExtra(EXTRA_DASH_ANCHOR_DP, SettingsStore.DEFAULT_DASH_ANCHOR_DP)
+            ?: SettingsStore.DEFAULT_DASH_ANCHOR_DP
         dashEnabled = intent?.getBooleanExtra(EXTRA_DASH_ENABLED, false) ?: false
         startSession(quality, maxFps, dashResolution)
         return START_NOT_STICKY
@@ -113,6 +117,7 @@ class CaptureService : Service() {
                         this@CaptureService,
                         quality,
                         dashResolution,
+                        dashAnchorDp,
                         preferExisting = true,
                     )
                 }
@@ -125,7 +130,7 @@ class CaptureService : Service() {
             registerKeyguardUnlockListener()
             // Self-heal: if the helper is killed (adbd restart on Wi-Fi/debug loss), respawn it over
             // the loopback channel so the dash recovers instead of freezing.
-            DashHelper.startWatchdog(this, quality, dashResolution)
+            DashHelper.startWatchdog(this, quality, dashResolution, dashAnchorDp)
             switch
         } else {
             mirror
@@ -454,6 +459,8 @@ class CaptureService : Service() {
         const val EXTRA_DASH_ENABLED = "dashEnabled"
         const val EXTRA_DASH_WIDTH = "dashWidth"
         const val EXTRA_DASH_HEIGHT = "dashHeight"
+        /** Logical width (dp) the dash lays out as; lower = larger UI. */
+        const val EXTRA_DASH_ANCHOR_DP = "dashAnchorDp"
 
         // Handed over by the Activity after the user grants screen capture.
         @Volatile var resultCode: Int = 0

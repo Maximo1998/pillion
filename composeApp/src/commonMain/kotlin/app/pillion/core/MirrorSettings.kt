@@ -6,9 +6,11 @@ package app.pillion.core
  * @param quality JPEG quality of each frame (10–80).
  * @param maxFps  upper bound on frames sent per second; the engine paces to this.
  * @param dashResolution off-screen display size for dedicated dash mode; output is scaled to 480x240.
+ * @param dashAnchorDp logical width (dp) the dash lays out as; lower = larger UI. See [SettingsStore].
  */
 data class MirrorSettings(
     val quality: Int = 40,
     val maxFps: Int = 15,
     val dashResolution: DashResolution = DashResolution.DEFAULT,
+    val dashAnchorDp: Int = SettingsStore.DEFAULT_DASH_ANCHOR_DP,
 )

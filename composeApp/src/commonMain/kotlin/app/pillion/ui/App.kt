@@ -43,6 +43,7 @@ fun App(
         var showDashOnboarding by rememberSaveable { mutableStateOf(false) }
         var dashEnabled by remember { mutableStateOf(settingsStore?.dashEnabled() ?: false) }
         var dashResolution by remember { mutableStateOf(settingsStore?.dashResolution() ?: DashResolution.DEFAULT) }
+        var dashAnchorDp by remember { mutableStateOf(settingsStore?.dashAnchorDp() ?: SettingsStore.DEFAULT_DASH_ANCHOR_DP) }
         var showDisclaimer by rememberSaveable { mutableStateOf(true) }
         var update by remember { mutableStateOf<UpdateInfo?>(null) }
         var updateDismissed by rememberSaveable { mutableStateOf(false) }
@@ -79,6 +80,11 @@ fun App(
                     dashResolution = it
                     settingsStore?.setDashResolution(it)
                 },
+                dashAnchorDp = dashAnchorDp,
+                onDashAnchorDp = {
+                    dashAnchorDp = it
+                    settingsStore?.setDashAnchorDp(it)
+                },
                 onSetUpDash = { showDashOnboarding = true },
                 onDisableDash = { dashEnabled = false; settingsStore?.setDashEnabled(false) },
                 update = update,
@@ -89,7 +95,7 @@ fun App(
                 state = state,
                 update = update,
                 onOpenSettings = { showSettings = true },
-                onStart = { controller.start(MirrorSettings(quality, maxFps, dashResolution)) },
+                onStart = { controller.start(MirrorSettings(quality, maxFps, dashResolution, dashAnchorDp)) },
                 onStop = controller::stop,
             )
         }

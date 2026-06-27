@@ -30,9 +30,18 @@ class AndroidSettingsStore(context: Context) : SettingsStore {
         prefs.edit().putString(KEY_DASH_RESOLUTION, resolution.name).apply()
     }
 
+    override fun dashAnchorDp(): Int =
+        prefs.getInt(KEY_DASH_ANCHOR_DP, SettingsStore.DEFAULT_DASH_ANCHOR_DP)
+            .coerceIn(SettingsStore.MIN_DASH_ANCHOR_DP, SettingsStore.MAX_DASH_ANCHOR_DP)
+
+    override fun setDashAnchorDp(dp: Int) {
+        prefs.edit().putInt(KEY_DASH_ANCHOR_DP, dp).apply()
+    }
+
     private companion object {
         const val KEY_THEME = "theme_mode"
         const val KEY_DASH_ENABLED = "dash_enabled"
         const val KEY_DASH_RESOLUTION = "dash_resolution"
+        const val KEY_DASH_ANCHOR_DP = "dash_anchor_dp"
     }
 }

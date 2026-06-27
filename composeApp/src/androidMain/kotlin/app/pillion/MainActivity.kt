@@ -43,6 +43,7 @@ class MainActivity : ComponentActivity() {
                 .putExtra(CaptureService.EXTRA_DASH_ENABLED, settingsStore.dashEnabled())
                 .putExtra(CaptureService.EXTRA_DASH_WIDTH, pendingSettings.dashResolution.width)
                 .putExtra(CaptureService.EXTRA_DASH_HEIGHT, pendingSettings.dashResolution.height)
+                .putExtra(CaptureService.EXTRA_DASH_ANCHOR_DP, pendingSettings.dashAnchorDp)
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) startForegroundService(intent)
             else startService(intent)
         }
